@@ -1,0 +1,73 @@
+"""author: ddabberu
+description: flask rest API app with elastic and sqlite db"""
+
+
+import os
+from flask import Flask, abort, request, jsonify, g, url_for
+from flask_sqlalchemy import SQLAlchemy
+from flask_httpauth import HTTPBasicAuth
+from passlib.apps import custom_app_context as pwd_context
+from itsdangerous import (TimedJSONWebSignatureSerializer as Serializer, BadSignature, SignatureExpired)
+from datetime import datetime
+from elasticsearch import Elasticsearch
+from flask import json, Response
+
+def create_app(test_config=None):
+    # create and configure the app
+    app = Flask(__name__, instance_relative_config=True)
+    app.config.from_mapping(
+        SECRET_KEY='colleague marketplace hash',
+        SQLALCHEMY_DATABASE_URI='sqlite:///db.sqlite'
+        SQLALCHEMY_COMMIT_ON_TEARDOWN=True
+        #DATABASE=os.path.join(app.instance_path, 'flaskr.sqlite'),
+    )
+    if test_config is None:
+        # load the instance config, if it exists, when not testing
+        app.config.from_pyfile('config.py', silent=True)
+    else:
+        # load the test config if passed in
+        app.config.from_mapping(test_config)
+    # ensure the instance folder exists
+    try:
+        os.makedirs(app.instance_path)
+    except OSError:
+        pass
+
+
+    #init vars
+    db = SQLAlchemy(app)
+    auth = HTTPBasicAuth()
+    es = Elasticsearch(["localhost:9200/"], http_auth=('elkuser', 'password'),
+                   scheme="http", port=9200, )
+
+    ##elastic db
+    @app.route('/api/search/<indexS>/<searchstring>')
+    def getDocuments(indexS, searchstring):
+        res = es.search(index=indexS, body={"query": {"match": {"tags": searchstring}}})
+        docList = []
+        print("Got %d Hits:" % res['hits']['total'])
+        for hit in res['hits']['hits']:
+            # print("%(timestamp)s %(author)s: %(text)s" % hit["_source"])
+            # docList.append(json.dumps(hit["_source"]))
+            docList.append(hit["_source"])
+            print( hit["_source"])
+        jsondumpstr = json.dumps(docList)
+        print(jsondumpstr)
+        #return jsonify({'matchingdocs': jsondumpstr})
+        return Response(jsondumpstr, mimetype='application/json')
+
+
+    @app.route('/api/document', methods=['POST'])
+    def addDocument():
+        if request.headers['Content-Type'] == 'application/json':
+            doc_index=request.json.get("Category")
+            print("index:{}".format(doc_index))
+            payload = json.dumps(request.json)
+            print(payload)
+            res = es.index(index=doc_index, doc_type='community_post', body=payload)
+            result = res['result'];
+            return jsonify({'result': result})
+        else:
+            return "415 Unsupported!!"
+
+    return app
